@@ -2,7 +2,8 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = ''  // This will be set dynamically
+        DEV_IMAGE = 'prasanth0003/dev:latest'
+        PROD_IMAGE = 'prasanth0003/prod:latest'
     }
 
     stages {
@@ -18,9 +19,9 @@ pipeline {
             steps {
                 script {
                     if (env.BRANCH_NAME == 'main') {
-                        IMAGE_NAME = 'prasanth0003/prod:latest'
+                        IMAGE_NAME = "${PROD_IMAGE}"
                     } else {
-                        IMAGE_NAME = 'prasanth0003/dev:latest'
+                        IMAGE_NAME = "${DEV_IMAGE}"
                     }
                     echo "Docker Image to be built: ${IMAGE_NAME}"
                 }
@@ -38,10 +39,10 @@ pipeline {
             steps {
                 echo 'Logging into Docker Hub and pushing the image'
                 withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh '''
+                    sh """
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         docker push ${IMAGE_NAME}
-                    '''
+                    """
                 }
             }
         }
