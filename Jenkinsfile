@@ -4,7 +4,6 @@ pipeline {
     environment {
         DOCKER_DEV_REPO  = "prasanth0003/dev"
         DOCKER_PROD_REPO = "prasanth0003/prod"
-        COMMIT_HASH      = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
     }
 
     stages {
@@ -12,22 +11,25 @@ pipeline {
             steps {
                 checkout scm
                 script {
+                    // Get commit hash
+                    env.COMMIT_HASH = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+
                     // Detect branch name
-                    env.BRANCH_NAME = env.GIT_BRANCH ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+                    env.BRANCH_NAME = env.GIT_BRANCH?.replace('origin/', '') ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
 
                     // Set IMAGE NAME based on branch
                     if (env.BRANCH_NAME == 'dev') {
-                        env.IMAGE_NAME = "${DOCKER_DEV_REPO}:${COMMIT_HASH}"
-                        env.LATEST_TAG = "${DOCKER_DEV_REPO}:latest"
+                        env.IMAGE_NAME  = "${DOCKER_DEV_REPO}:${COMMIT_HASH}"
+                        env.LATEST_TAG  = "${DOCKER_DEV_REPO}:latest"
                     } else if (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') {
-                        env.IMAGE_NAME = "${DOCKER_PROD_REPO}:${COMMIT_HASH}"
-                        env.LATEST_TAG = "${DOCKER_PROD_REPO}:latest"
+                        env.IMAGE_NAME  = "${DOCKER_PROD_REPO}:${COMMIT_HASH}"
+                        env.LATEST_TAG  = "${DOCKER_PROD_REPO}:latest"
                     } else {
                         error("🚫 Unsupported branch: ${env.BRANCH_NAME}")
                     }
 
-                    echo "Branch: ${env.BRANCH_NAME}"
-                    echo "Docker Image: ${env.IMAGE_NAME} + ${env.LATEST_TAG}"
+                    echo "🔍 Branch: ${env.BRANCH_NAME}"
+                    echo "🐳 Docker Image: ${env.IMAGE_NAME}, ${env.LATEST_TAG}"
                 }
             }
         }
