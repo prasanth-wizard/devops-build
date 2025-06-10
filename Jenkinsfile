@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = 'prasanth0003/dev:latest'
+        IMAGE_NAME = ''  // This will be set dynamically
     }
 
     stages {
@@ -11,6 +11,19 @@ pipeline {
                 git branch: 'dev',
                     credentialsId: 'github-creds',
                     url: 'https://github.com/prasanth-wizard/devops-build.git'
+            }
+        }
+
+        stage('Set Image Name') {
+            steps {
+                script {
+                    if (env.BRANCH_NAME == 'main') {
+                        IMAGE_NAME = 'prasanth0003/prod:latest'
+                    } else {
+                        IMAGE_NAME = 'prasanth0003/dev:latest'
+                    }
+                    echo "Docker Image to be built: ${IMAGE_NAME}"
+                }
             }
         }
 
@@ -56,4 +69,3 @@ pipeline {
         }
     }
 }
-
