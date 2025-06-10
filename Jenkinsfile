@@ -1,71 +1,85 @@
 pipeline {
     agent any
 
+    options {
+        disableConcurrentBuilds()  // Prevent parallel builds of the same branch
+    }
+
     environment {
-        DEV_IMAGE = 'prasanth0003/dev:latest'
+        // Docker Hub image names
+        DEV_IMAGE  = 'prasanth0003/dev:latest'
         PROD_IMAGE = 'prasanth0003/prod:latest'
+        // Get commit short hash for unique tagging
+        COMMIT_HASH = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
     }
 
     stages {
-        stage('Checkout SCM') {
+        stage('Checkout & Branch Detection') {
             steps {
                 checkout scm
                 script {
-                    // Extract the branch name from GIT env if not present
-                    if (!env.BRANCH_NAME) {
-                        env.BRANCH_NAME = sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
-                    }
-                    echo "Checked out branch: ${env.BRANCH_NAME}"
-                }
-            }
-        }
-
-        stage('Set Image Name') {
-            steps {
-                script {
-                    def IMAGE_NAME = ''
+                    // Get current branch name reliably
+                    env.BRANCH_NAME = env.GIT_BRANCH ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
+                    
+                    // Set Docker image based on branch
                     if (env.BRANCH_NAME == 'main') {
-                        IMAGE_NAME = "${PROD_IMAGE}"
+                        env.IMAGE_NAME = "${PROD_IMAGE}"
+                        env.ALT_TAG    = "prasanth0003/prod:${COMMIT_HASH}"
                     } else {
-                        IMAGE_NAME = "${DEV_IMAGE}"
+                        env.IMAGE_NAME = "${DEV_IMAGE}"
+                        env.ALT_TAG    = "prasanth0003/dev:${COMMIT_HASH}-${env.BRANCH_NAME.replace('/', '-')}"
                     }
-                    // Set it globally
-                    env.IMAGE_NAME = IMAGE_NAME
-                    echo "Docker Image to be built: ${env.IMAGE_NAME}"
+                    
+                    echo "Building for BRANCH: ${env.BRANCH_NAME}"
+                    echo "Using IMAGE: ${env.IMAGE_NAME}"
+                    echo "Additional TAG: ${env.ALT_TAG}"
                 }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                echo "Building Docker image for branch: ${env.BRANCH_NAME}"
-                sh "docker build -t ${env.IMAGE_NAME} ."
+                sh """
+                    docker build -t ${env.IMAGE_NAME} -t ${env.ALT_TAG} .
+                    docker images | grep prasanth0003
+                """
             }
         }
 
-        stage('Push Docker Image') {
+        stage('Push to Docker Hub') {
             steps {
-                echo 'Logging into Docker Hub and pushing the image'
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh '''
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh """
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push $IMAGE_NAME
-                    '''
+                        docker push ${env.IMAGE_NAME}
+                        docker push ${env.ALT_TAG}
+                    """
                 }
             }
         }
 
         stage('Deploy to Worker Node') {
+            when {
+                // Only deploy if branch is 'main' or 'dev'
+                anyOf {
+                    branch 'main'
+                    branch 'dev'
+                }
+            }
             steps {
                 sshagent(['worker-node-ssh']) {
-                    sh '''
+                    sh """
                         ssh -o StrictHostKeyChecking=no ubuntu@13.51.56.138 "
                             cd devops-build &&
-                            docker pull $IMAGE_NAME &&
+                            docker pull ${env.IMAGE_NAME} &&
                             docker-compose down &&
                             docker-compose up -d
                         "
-                    '''
+                    """
                 }
             }
         }
@@ -73,8 +87,15 @@ pipeline {
 
     post {
         always {
-            echo 'Cleaning up Docker credentials'
             sh 'docker logout || true'
+            cleanWs()  // Clean workspace after build
+        }
+        success {
+            echo "Pipeline succeeded for ${env.BRANCH_NAME}"
+        }
+        failure {
+            echo "Pipeline failed for ${env.BRANCH_NAME}"
+            // Add email/slack notification here if needed
         }
     }
 }
