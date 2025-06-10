@@ -10,16 +10,14 @@ pipeline {
     stages {
         stage('Checkout SCM') {
             steps {
-                git branch: "${env.BRANCH_NAME}",
-                    credentialsId: 'github-creds',
-                    url: 'https://github.com/prasanth-wizard/devops-build.git'
+                checkout scm
             }
         }
 
         stage('Set Image Name') {
             steps {
                 script {
-                    if (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') {
+                    if (env.BRANCH_NAME == 'main') {
                         IMAGE_NAME = "${PROD_IMAGE}"
                     } else {
                         IMAGE_NAME = "${DEV_IMAGE}"
