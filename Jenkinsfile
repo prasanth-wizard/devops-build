@@ -1,38 +1,33 @@
 pipeline {
     agent any
 
-    options {
-        disableConcurrentBuilds()  // Prevent parallel builds of the same branch
-    }
-
     environment {
-        // Docker Hub image names
-        DEV_IMAGE  = 'prasanth0003/dev:latest'
-        PROD_IMAGE = 'prasanth0003/prod:latest'
-        // Get commit short hash for unique tagging
-        COMMIT_HASH = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+        DOCKER_DEV_REPO  = "prasanth0003/dev"
+        DOCKER_PROD_REPO = "prasanth0003/prod"
+        COMMIT_HASH      = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
     }
 
     stages {
-        stage('Checkout & Branch Detection') {
+        stage('Checkout Code') {
             steps {
                 checkout scm
                 script {
-                    // Get current branch name reliably
+                    // Detect branch name
                     env.BRANCH_NAME = env.GIT_BRANCH ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()
-                    
-                    // Set Docker image based on branch
-                    if (env.BRANCH_NAME == 'main') {
-                        env.IMAGE_NAME = "${PROD_IMAGE}"
-                        env.ALT_TAG    = "prasanth0003/prod:${COMMIT_HASH}"
+
+                    // Set IMAGE NAME based on branch
+                    if (env.BRANCH_NAME == 'dev') {
+                        env.IMAGE_NAME = "${DOCKER_DEV_REPO}:${COMMIT_HASH}"
+                        env.LATEST_TAG = "${DOCKER_DEV_REPO}:latest"
+                    } else if (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') {
+                        env.IMAGE_NAME = "${DOCKER_PROD_REPO}:${COMMIT_HASH}"
+                        env.LATEST_TAG = "${DOCKER_PROD_REPO}:latest"
                     } else {
-                        env.IMAGE_NAME = "${DEV_IMAGE}"
-                        env.ALT_TAG    = "prasanth0003/dev:${COMMIT_HASH}-${env.BRANCH_NAME.replace('/', '-')}"
+                        error("🚫 Unsupported branch: ${env.BRANCH_NAME}")
                     }
-                    
-                    echo "Building for BRANCH: ${env.BRANCH_NAME}"
-                    echo "Using IMAGE: ${env.IMAGE_NAME}"
-                    echo "Additional TAG: ${env.ALT_TAG}"
+
+                    echo "Branch: ${env.BRANCH_NAME}"
+                    echo "Docker Image: ${env.IMAGE_NAME} + ${env.LATEST_TAG}"
                 }
             }
         }
@@ -40,13 +35,13 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh """
-                    docker build -t ${env.IMAGE_NAME} -t ${env.ALT_TAG} .
+                    docker build -t ${env.IMAGE_NAME} -t ${env.LATEST_TAG} .
                     docker images | grep prasanth0003
                 """
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Push Docker Image to Docker Hub') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-creds',
@@ -56,29 +51,7 @@ pipeline {
                     sh """
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         docker push ${env.IMAGE_NAME}
-                        docker push ${env.ALT_TAG}
-                    """
-                }
-            }
-        }
-
-        stage('Deploy to Worker Node') {
-            when {
-                // Only deploy if branch is 'main' or 'dev'
-                anyOf {
-                    branch 'main'
-                    branch 'dev'
-                }
-            }
-            steps {
-                sshagent(['worker-node-ssh']) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ubuntu@13.51.56.138 "
-                            cd devops-build &&
-                            docker pull ${env.IMAGE_NAME} &&
-                            docker-compose down &&
-                            docker-compose up -d
-                        "
+                        docker push ${env.LATEST_TAG}
                     """
                 }
             }
@@ -88,14 +61,13 @@ pipeline {
     post {
         always {
             sh 'docker logout || true'
-            cleanWs()  // Clean workspace after build
+            cleanWs()
         }
         success {
-            echo "Pipeline succeeded for ${env.BRANCH_NAME}"
+            echo "✅ Docker image pushed successfully for branch ${env.BRANCH_NAME}"
         }
         failure {
-            echo "Pipeline failed for ${env.BRANCH_NAME}"
-            // Add email/slack notification here if needed
+            echo "❌ Pipeline failed for branch ${env.BRANCH_NAME}"
         }
     }
 }
