@@ -35,7 +35,7 @@ pipeline {
 
         stage('Deploy to Worker Node') {
             steps {
-                sshagent(['ubuntu']) {
+                sshagent(['worker-node-ssh']) {
                     sh '''
                         ssh -o StrictHostKeyChecking=no ubuntu@13.51.56.138 "
                             cd devops-build &&
