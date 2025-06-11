@@ -24,26 +24,19 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    // Base image name without tag
                     if (env.BRANCH_NAME == 'dev') {
-                        env.BASE_IMAGE_NAME = "${DOCKER_REGISTRY}/${DOCKER_DEV_REPO}"
+                        env.BASE_IMAGE = "${DOCKER_REGISTRY}/${DOCKER_DEV_REPO}"
                     } else if (env.BRANCH_NAME == 'main') {
-                        env.BASE_IMAGE_NAME = "${DOCKER_REGISTRY}/${DOCKER_PROD_REPO}"
+                        env.BASE_IMAGE = "${DOCKER_REGISTRY}/${DOCKER_PROD_REPO}"
                     } else {
                         error("🚫 Unsupported branch '${env.BRANCH_NAME}'. Only 'dev' and 'main' are allowed.")
                     }
 
-                    // Allow any tag format - these are just suggestions
-                    env.IMAGE_TAGS = """
-                        ${env.BASE_IMAGE_NAME}:${env.COMMIT_HASH}
-                        ${env.BASE_IMAGE_NAME}:latest
-                        ${env.BASE_IMAGE_NAME}:${env.BRANCH_NAME}
-                        ${env.BASE_IMAGE_NAME}:${env.BUILD_NUMBER}
-                        ${env.BASE_IMAGE_NAME}:${env.BRANCH_NAME}-${env.BUILD_NUMBER}
-                    """.trim().split('\n').collect { it.trim() }.findAll { it }
-
+                    // Define tags as a string joined by spaces for docker build command
+                    env.DOCKER_TAGS = "${env.BASE_IMAGE}:${env.COMMIT_HASH} ${env.BASE_IMAGE}:latest ${env.BASE_IMAGE}:${env.BRANCH_NAME} ${env.BASE_IMAGE}:${env.BUILD_NUMBER}"
+                    
                     echo "🔍 Branch: ${env.BRANCH_NAME}"
-                    echo "🐳 Available Image Tags: ${env.IMAGE_TAGS.join(', ')}"
+                    echo "🐳 Image Tags: ${env.DOCKER_TAGS}"
                 }
             }
         }
@@ -51,17 +44,17 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    // Build with all tags
-                    def buildArgs = env.IMAGE_TAGS.collect { "-t ${it}" }.join(' ')
+                    // Convert tags string to build arguments
+                    def buildArgs = env.DOCKER_TAGS.split().collect { "-t ${it}" }.join(' ')
                     
                     sh """
                         docker build ${buildArgs} .
                         docker images | grep prasanth0003
                     """
 
-                    // Verify at least one image built successfully
+                    // Verify the image built successfully
                     def imageCheck = sh(
-                        script: "docker inspect --type=image ${env.IMAGE_TAGS[0]}",
+                        script: "docker inspect --type=image ${env.BASE_IMAGE}:${env.COMMIT_HASH}",
                         returnStatus: true
                     )
                     if (imageCheck != 0) {
@@ -79,13 +72,12 @@ pipeline {
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
                     script {
-                        // Login to Docker Hub
                         sh """
                             echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         """
 
-                        // Push all tags with retry logic
-                        env.IMAGE_TAGS.each { tag ->
+                        // Push each tag
+                        env.DOCKER_TAGS.split().each { tag ->
                             retry(3) {
                                 sh "docker push ${tag}"
                             }
@@ -103,8 +95,8 @@ pipeline {
                         usernameVariable: 'SSH_USER',
                         keyFileVariable: 'SSH_KEY'
                     )]) {
-                        // Deploy using the first tag (could be changed to any preferred tag)
-                        def dockerImage = env.IMAGE_TAGS[0]
+                        // Use the commit hash tag for deployment
+                        def dockerImage = "${env.BASE_IMAGE}:${env.COMMIT_HASH}"
 
                         sh """
                             ssh -o StrictHostKeyChecking=no -i $SSH_KEY ${SSH_USER}@${env.AGENT_IP} "
@@ -125,15 +117,19 @@ pipeline {
         always {
             script {
                 sh 'docker logout || true'
-                // Clean up all built images
-                env.IMAGE_TAGS.each { tag ->
-                    sh "docker rmi ${tag} || true"
+                // Clean up images safely
+                try {
+                    env.DOCKER_TAGS.split().each { tag ->
+                        sh "docker rmi ${tag} || true"
+                    }
+                } catch (e) {
+                    echo "Warning: Error during image cleanup - ${e.message}"
                 }
                 cleanWs()
             }
         }
         success {
-            echo "Successfully built and pushed images with tags: ${env.IMAGE_TAGS.join(', ')}"
+            echo "Successfully built and pushed images with tags: ${env.DOCKER_TAGS}"
         }
         failure {
             echo "Pipeline failed for branch ${env.BRANCH_NAME}"
