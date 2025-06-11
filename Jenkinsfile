@@ -4,10 +4,7 @@ pipeline {
     environment {
         DOCKER_DEV_REPO  = "prasanth0003/dev"
         DOCKER_PROD_REPO = "prasanth0003/prod"
-<<<<<<< HEAD
-        COMMIT_HASH      = ''
-=======
->>>>>>> dev
+        DOCKER_REGISTRY = "docker.io"
     }
 
     stages {
@@ -15,73 +12,104 @@ pipeline {
             steps {
                 checkout scm
                 script {
-                    // ✅ Get commit hash
-<<<<<<< HEAD
-                    env.COMMIT_HASH = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    // Get commit hash (7 characters is standard for Git)
+                    env.COMMIT_HASH = sh(
+                        script: 'git rev-parse --short=7 HEAD',
+                        returnStdout: true
+                    ).trim()
 
-                    // ✅ Get branch name (remove origin/ if exists)
-                    env.BRANCH_NAME = (env.GIT_BRANCH ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true).trim()).replace('origin/', '')
+                    // Normalize branch name
+                    env.BRANCH_NAME = env.GIT_BRANCH?.replace("origin/", "") ?: sh(
+                        script: "git rev-parse --abbrev-ref HEAD",
+                        returnStdout: true
+                    ).trim()
 
-                    // ✅ Set Docker image tags based on branch
+                    // Validate branch and set tags
                     if (env.BRANCH_NAME == 'dev') {
-                        env.IMAGE_NAME = "${DOCKER_DEV_REPO}:${COMMIT_HASH}"
-                        env.LATEST_TAG = "${DOCKER_DEV_REPO}:latest"
+                        env.IMAGE_NAME = "${DOCKER_REGISTRY}/${DOCKER_DEV_REPO}:${env.COMMIT_HASH}"
+                        env.LATEST_TAG = "${DOCKER_REGISTRY}/${DOCKER_DEV_REPO}:latest"
                     } else if (env.BRANCH_NAME == 'main') {
-                        env.IMAGE_NAME = "${DOCKER_PROD_REPO}:${COMMIT_HASH}"
-                        env.LATEST_TAG = "${DOCKER_PROD_REPO}:latest"
+                        env.IMAGE_NAME = "${DOCKER_REGISTRY}/${DOCKER_PROD_REPO}:${env.COMMIT_HASH}"
+                        env.LATEST_TAG = "${DOCKER_REGISTRY}/${DOCKER_PROD_REPO}:latest"
+                        // Add semantic version tag for production
+                        env.VERSION_TAG = "${DOCKER_REGISTRY}/${DOCKER_PROD_REPO}:1.0.${env.BUILD_NUMBER}"
                     } else {
-                        error("🚫 Unsupported branch: ${env.BRANCH_NAME}. Use 'main' or 'dev' only.")
+                        error("🚫 Unsupported branch '${env.BRANCH_NAME}'. Only 'dev' and 'main' are allowed.")
                     }
 
                     echo "🔍 Branch: ${env.BRANCH_NAME}"
-                    echo "🐳 Docker Image: ${env.IMAGE_NAME}, ${env.LATEST_TAG}"
-=======
-                    def hash = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    env.COMMIT_HASH = hash
-
-                    // ✅ Get branch name
-                    def branch = (env.GIT_BRANCH ?: sh(script: "git rev-parse --abbrev-ref HEAD", returnStdout: true)).trim().replace("origin/", "")
-                    env.BRANCH_NAME = branch
-
-                    // ✅ Set image names
-                    if (branch == 'dev') {
-                        env.IMAGE_NAME = "${DOCKER_DEV_REPO}:${env.COMMIT_HASH}"
-                        env.LATEST_TAG = "${DOCKER_DEV_REPO}:latest"
-                    } else if (branch == 'main') {
-                        env.IMAGE_NAME = "${DOCKER_PROD_REPO}:${env.COMMIT_HASH}"
-                        env.LATEST_TAG = "${DOCKER_PROD_REPO}:latest"
-                    } else {
-                        error("🚫 Unsupported branch '${branch}'. Only 'dev' and 'main' are allowed.")
-                    }
-
-                    echo "🔍 Branch: ${env.BRANCH_NAME}"
-                    echo "🐳 Image: ${env.IMAGE_NAME}, ${env.LATEST_TAG}"
->>>>>>> dev
+                    echo "🐳 Image Tags: ${env.IMAGE_NAME}, ${env.LATEST_TAG}" +
+                         (env.VERSION_TAG ? ", ${env.VERSION_TAG}" : "")
                 }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build -t ${env.IMAGE_NAME} -t ${env.LATEST_TAG} .
-                    docker images | grep prasanth0003
-                """
+                script {
+                    // Create build args including cache-from for optimization
+                    def buildArgs = "-t ${env.IMAGE_NAME} -t ${env.LATEST_TAG}"
+                    if (env.VERSION_TAG) {
+                        buildArgs += " -t ${env.VERSION_TAG}"
+                    }
+
+                    sh """
+                        docker build ${buildArgs} .
+                        docker images | grep prasanth0003
+                    """
+
+                    // Verify the image was built successfully
+                    def imageCheck = sh(
+                        script: "docker inspect --type=image ${env.IMAGE_NAME}",
+                        returnStatus: true
+                    )
+                    if (imageCheck != 0) {
+                        error("❌ Docker image failed to build")
+                    }
+                }
             }
         }
 
-        stage('Push Docker Image to Docker Hub') {
+        stage('Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-creds',
                     usernameVariable: 'DOCKER_USER',
                     passwordVariable: 'DOCKER_PASS'
                 )]) {
-                    sh """
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker push ${env.IMAGE_NAME}
-                        docker push ${env.LATEST_TAG}
-                    """
+                    script {
+                        // Login with timeout and retry
+                        def loginAttempts = 0
+                        def maxAttempts = 3
+                        def loggedIn = false
+
+                        while (loginAttempts < maxAttempts && !loggedIn) {
+                            try {
+                                sh """
+                                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                                """
+                                loggedIn = true
+                            } catch (e) {
+                                loginAttempts++
+                                if (loginAttempts >= maxAttempts) {
+                                    error("❌ Failed to login to Docker Hub after ${maxAttempts} attempts")
+                                }
+                                sleep(time: 5, unit: 'SECONDS')
+                            }
+                        }
+
+                        // Push with retry logic
+                        def pushTags = [env.IMAGE_NAME, env.LATEST_TAG]
+                        if (env.VERSION_TAG) {
+                            pushTags << env.VERSION_TAG
+                        }
+
+                        pushTags.each { tag ->
+                            retry(3) {
+                                sh "docker push ${tag}"
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -89,14 +117,25 @@ pipeline {
 
     post {
         always {
-            sh 'docker logout || true'
-            cleanWs()
+            script {
+                // Cleanup Docker credentials and workspace
+                sh 'docker logout || true'
+
+                // Optionally remove local images to save space
+                if (env.IMAGE_NAME) {
+                    sh "docker rmi ${env.IMAGE_NAME} || true"
+                }
+
+                cleanWs()
+            }
         }
         success {
-            echo "✅ Docker image pushed successfully for branch ${env.BRANCH_NAME}"
+            echo "✅ Successfully built and pushed: ${env.IMAGE_NAME}"
+            // Add notification (Slack, email, etc.)
         }
         failure {
             echo "❌ Pipeline failed for branch ${env.BRANCH_NAME}"
+            // Add failure notification
         }
     }
 }
