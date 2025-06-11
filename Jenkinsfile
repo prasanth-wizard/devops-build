@@ -151,10 +151,10 @@ pipeline {
             }
         }
         success {
-            echo "✅ Successfully built and pushed: ${env.IMAGE_NAME}"
+            echo "Successfully built and pushed: ${env.IMAGE_NAME}"
         }
         failure {
-            echo "❌ Pipeline failed for branch ${env.BRANCH_NAME}"
+            echo "Pipeline failed for branch ${env.BRANCH_NAME}"
         }
     }
 }
