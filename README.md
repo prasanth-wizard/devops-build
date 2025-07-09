@@ -328,21 +328,217 @@ pipeline {
 
 ---
 
+---
+
 ## Monitoring System
 
-All services are deployed using **Docker Compose** inside the `monitoring/` directory.
+All monitoring services are deployed using Docker Compose located in the `monitoring/` directory.
 
-### Tools Used
+### Folder Structure
 
-- **Prometheus** – Scrapes metrics
-- **Alertmanager** – Sends alerts (e.g., if app goes down)
-- **Grafana** – Visualizes metrics on dashboards
-- **Blackbox Exporter** – Checks HTTP availability
+```
+monitoring/
+├── alertmanager
+│   └── alertmanager.yml
+├── blackbox
+│   └── blackbox.yml
+├── docker-compose.yml
+└── prometheus
+    ├── alert_rules.yml
+    └── prometheus.yml
+```
 
-### Access
+---
 
-- Prometheus: `http://<ip>:9090`
-- Grafana: `http://<ip>:3000`
+### docker-compose.yml
+
+```yaml
+version: '3.8'
+
+services:
+  react-app:
+    image: prasanth0003/dev:latest
+    container_name: react-app
+    ports:
+      - "80:80"
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    ports:
+      - "9090:9090"
+
+  alertmanager:
+    image: prom/alertmanager
+    container_name: alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    ports:
+      - "9093:9093"
+
+  grafana:
+    image: grafana/grafana
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  node-exporter:
+    image: prom/node-exporter
+    container_name: node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+
+  blackbox:
+    image: prom/blackbox-exporter
+    container_name: blackbox
+    ports:
+      - "9115:9115"
+    volumes:
+      - ./blackbox:/config
+    command:
+      - '--config.file=/config/blackbox.yml'
+```
+
+---
+
+### prometheus.yml
+
+```yaml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - alert_rules.yml
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'node_exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: 'react_http_probe'
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+        - http://51.20.2.247
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox:9115
+```
+
+---
+
+### alert_rules.yml
+
+```yaml
+groups:
+  - name: react_app_alerts
+    rules:
+      - alert: ReactAppContainerDown
+        expr: up{job="react_app"} == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "React container unreachable"
+          description: "Prometheus can't connect to react-app on port 80."
+
+      - alert: ReactHTTPProbeFailed
+        expr: probe_success{job="react_http_probe"} == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "React HTTP health check failed"
+          description: "React app did not return HTTP 200."
+```
+
+---
+
+### alertmanager.yml
+
+
+```yaml
+global:
+  smtp_smarthost: 'smtp.gmail.com:587'
+  smtp_from: 'prasanthkalichamy30@gmail.com'
+  smtp_auth_username: 'prasanthkalichamy30@gmail.com'
+  smtp_auth_password: 'aqsa nfqv kkhz rloa'
+  smtp_require_tls: true
+
+route:
+  receiver: 'email-alert'
+
+receivers:
+  - name: 'email-alert'
+    email_configs:
+      - to: 'prasanthkalichamy30@gmail.com'
+        send_resolved: true
+```
+
+---
+
+### blackbox.yml
+
+```yaml
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      valid_http_versions: ["HTTP/1.1", "HTTP/2"]
+      valid_status_codes: [200]
+      method: GET
+```
+
+---
+
+### Run Monitoring Stack
+
+```bash
+cd monitoring/
+docker-compose up -d
+```
+
+Access monitoring dashboards:
+
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000
+- Alertmanager: http://localhost:9093
+- Blackbox Exporter: http://localhost:9115
+
 
 
 ---
