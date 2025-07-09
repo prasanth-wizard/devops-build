@@ -165,7 +165,6 @@ node_modules
 .git
 .gitignore
 Dockerfile
-README.md
 ```
 
 ---
