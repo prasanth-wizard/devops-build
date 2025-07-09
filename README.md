@@ -329,19 +329,20 @@ pipeline {
 
 ## Monitoring System
 
-All services deployed using Docker Compose in `monitoring/`.
+All services are deployed using **Docker Compose** inside the `monitoring/` directory.
 
-### Tools Used:
+### Tools Used
 
-- **Prometheus**: Scrapes metrics
-- **Alertmanager**: Sends alerts (e.g. if app is down)
-- **Grafana**: Dashboards for visualization
-- **Blackbox Exporter**: HTTP checks
+- **Prometheus** – Scrapes metrics
+- **Alertmanager** – Sends alerts (e.g., if app goes down)
+- **Grafana** – Visualizes metrics on dashboards
+- **Blackbox Exporter** – Checks HTTP availability
 
-### Access:
+### Access
 
 - Prometheus: `http://<ip>:9090`
 - Grafana: `http://<ip>:3000`
+
 
 ---
 
