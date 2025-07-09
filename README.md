@@ -133,6 +133,43 @@ services:
 
 ---
 
+
+### build.sh
+
+```bash
+#!/bin/bash
+docker build -t prasanth0003/react_app:dev .
+```
+
+### deploy.sh
+
+```bash
+#!/bin/bash
+docker-compose down
+docker-compose up -d
+```
+
+### .gitignore
+
+```bash
+node_modules/
+.env
+.DS_Store
+build/
+```
+
+### .dockerignore
+
+```bash
+node_modules
+.git
+.gitignore
+Dockerfile
+README.md
+```
+
+---
+
 ## AWS EC2 Deployment
 
 - Instance: `t2.micro`, Ubuntu
@@ -181,14 +218,14 @@ pipeline {
                     } else if (env.BRANCH_NAME == 'main') {
                         env.BASE_IMAGE = "${DOCKER_REGISTRY}/${DOCKER_PROD_REPO}"
                     } else {
-                        error("🚫 Unsupported branch '${env.BRANCH_NAME}'. Only 'dev' and 'main' are allowed.")
+                        error(" Unsupported branch '${env.BRANCH_NAME}'. Only 'dev' and 'main' are allowed.")
                     }
 
                     // Define tags as a string joined by spaces for docker build command
                     env.DOCKER_TAGS = "${env.BASE_IMAGE}:${env.COMMIT_HASH} ${env.BASE_IMAGE}:latest ${env.BASE_IMAGE}:${env.BRANCH_NAME} ${env.BASE_IMAGE}:${env.BUILD_NUMBER}"
                     
-                    echo "🔍 Branch: ${env.BRANCH_NAME}"
-                    echo "🐳 Image Tags: ${env.DOCKER_TAGS}"
+                    echo "Branch: ${env.BRANCH_NAME}"
+                    echo " Image Tags: ${env.DOCKER_TAGS}"
                 }
             }
         }
@@ -210,7 +247,7 @@ pipeline {
                         returnStatus: true
                     )
                     if (imageCheck != 0) {
-                        error("❌ Docker image failed to build")
+                        error(" Docker image failed to build")
                     }
                 }
             }
@@ -258,7 +295,7 @@ pipeline {
                                 docker run -d --name react-app -p 80:80 ${dockerImage}
                             "
                         """
-                        echo "🚀 Successfully deployed ${dockerImage} to ${env.AGENT_IP}"
+                        echo " Successfully deployed ${dockerImage} to ${env.AGENT_IP}"
                     }
                 }
             }
@@ -288,46 +325,6 @@ pipeline {
         }
     }
 }```
-
----
-
-## Additional Files in Repository
-
-These files support automation, builds, and container orchestration:
-
-### build.sh
-
-```bash
-#!/bin/bash
-docker build -t prasanth0003/react_app:dev .
-```
-
-### deploy.sh
-
-```bash
-#!/bin/bash
-docker-compose down
-docker-compose up -d
-```
-
-### .gitignore
-
-```bash
-node_modules/
-.env
-.DS_Store
-build/
-```
-
-### .dockerignore
-
-```bash
-node_modules
-.git
-.gitignore
-Dockerfile
-README.md
-```
 
 ---
 
