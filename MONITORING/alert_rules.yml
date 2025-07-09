@@ -1,0 +1,20 @@
+groups:
+  - name: react_app_alerts
+    rules:
+      - alert: ReactAppContainerDown
+        expr: up{job="react_app"} == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "React container unreachable"
+          description: "Prometheus can't connect to react-app on port 80."
+
+      - alert: ReactHTTPProbeFailed
+        expr: probe_success{job="react_http_probe"} == 0
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: "React HTTP health check failed"
+          description: "React app did not return HTTP 200."
