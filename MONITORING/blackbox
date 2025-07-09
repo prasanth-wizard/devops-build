@@ -1,8 +1,0 @@
-    image: prom/blackbox-exporter
-    container_name: blackbox
-    ports:
-      - "9115:9115"
-    volumes:
-      - ./blackbox:/config
-    command:
-      - '--config.file=/config/blackbox.yml'
