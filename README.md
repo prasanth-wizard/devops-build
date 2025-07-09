@@ -154,20 +154,41 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
-        SSH_CREDENTIALS = 'worker-node-ssh'
-        DOCKER_REPO_DEV = 'prasanth0003/dev'
-        DOCKER_REPO_PROD = 'prasanth0003/prod'
+        DOCKER_DEV_REPO  = "prasanth0003/dev"
+        DOCKER_PROD_REPO = "prasanth0003/prod"
+        DOCKER_REGISTRY = "docker.io"
+        AGENT_IP = "51.20.2.247"
+        AGENT_SSH_CREDS = "agent-1-ssh-creds"
     }
 
     stages {
-        stage('Checkout') {
+        stage('Checkout Code') {
             steps {
-                git branch: env.BRANCH_NAME, url: 'https://github.com/prasanth-wizard/devops-build.git'
+                checkout scm
                 script {
-                    COMMIT_HASH = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
-                    IMAGE_TAG = "${env.BRANCH_NAME}-${BUILD_NUMBER}-${COMMIT_HASH}"
-                    echo "Tag for Docker image: ${IMAGE_TAG}"
+                    env.COMMIT_HASH = sh(
+                        script: 'git rev-parse --short=7 HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    env.BRANCH_NAME = env.GIT_BRANCH?.replace("origin/", "") ?: sh(
+                        script: "git rev-parse --abbrev-ref HEAD",
+                        returnStdout: true
+                    ).trim()
+
+                    if (env.BRANCH_NAME == 'dev') {
+                        env.BASE_IMAGE = "${DOCKER_REGISTRY}/${DOCKER_DEV_REPO}"
+                    } else if (env.BRANCH_NAME == 'main') {
+                        env.BASE_IMAGE = "${DOCKER_REGISTRY}/${DOCKER_PROD_REPO}"
+                    } else {
+                        error("🚫 Unsupported branch '${env.BRANCH_NAME}'. Only 'dev' and 'main' are allowed.")
+                    }
+
+                    // Define tags as a string joined by spaces for docker build command
+                    env.DOCKER_TAGS = "${env.BASE_IMAGE}:${env.COMMIT_HASH} ${env.BASE_IMAGE}:latest ${env.BASE_IMAGE}:${env.BRANCH_NAME} ${env.BASE_IMAGE}:${env.BUILD_NUMBER}"
+                    
+                    echo "🔍 Branch: ${env.BRANCH_NAME}"
+                    echo "🐳 Image Tags: ${env.DOCKER_TAGS}"
                 }
             }
         }
@@ -175,36 +196,69 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    def imageName = env.BRANCH_NAME == 'main' ? DOCKER_REPO_PROD : DOCKER_REPO_DEV
-                    sh "docker build -t ${imageName}:${IMAGE_TAG} -t ${imageName}:latest ."
+                    // Convert tags string to build arguments
+                    def buildArgs = env.DOCKER_TAGS.split().collect { "-t ${it}" }.join(' ')
+                    
+                    sh """
+                        docker build ${buildArgs} .
+                        docker images | grep prasanth0003
+                    """
+
+                    // Verify the image built successfully
+                    def imageCheck = sh(
+                        script: "docker inspect --type=image ${env.BASE_IMAGE}:${env.COMMIT_HASH}",
+                        returnStatus: true
+                    )
+                    if (imageCheck != 0) {
+                        error("❌ Docker image failed to build")
+                    }
                 }
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                script {
-                    def imageName = env.BRANCH_NAME == 'main' ? DOCKER_REPO_PROD : DOCKER_REPO_DEV
-                    sh "echo ${DOCKERHUB_CREDENTIALS_PSW} | docker login -u ${DOCKERHUB_CREDENTIALS_USR} --password-stdin"
-                    sh "docker push ${imageName}:${IMAGE_TAG}"
-                    sh "docker push ${imageName}:latest"
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    script {
+                        sh """
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        """
+
+                        // Push each tag
+                        env.DOCKER_TAGS.split().each { tag ->
+                            retry(3) {
+                                sh "docker push ${tag}"
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        stage('Deploy to EC2') {
+        stage('Deploy to Agent-1') {
             steps {
                 script {
-                    def imageName = env.BRANCH_NAME == 'main' ? DOCKER_REPO_PROD : DOCKER_REPO_DEV
-                    sshagent([SSH_CREDENTIALS]) {
-                        sh '''
-                        ssh -o StrictHostKeyChecking=no ubuntu@<EC2-WORKER-IP> << EOF
-                        docker pull ${imageName}:latest
-                        docker stop react-app || true
-                        docker rm react-app || true
-                        docker run -d --name react-app -p 80:80 ${imageName}:latest
-                        EOF
-                        '''
+                    withCredentials([sshUserPrivateKey(
+                        credentialsId: env.AGENT_SSH_CREDS,
+                        usernameVariable: 'SSH_USER',
+                        keyFileVariable: 'SSH_KEY'
+                    )]) {
+                        // Use the commit hash tag for deployment
+                        def dockerImage = "${env.BASE_IMAGE}:${env.COMMIT_HASH}"
+
+                        sh """
+                            ssh -o StrictHostKeyChecking=no -i $SSH_KEY ${SSH_USER}@${env.AGENT_IP} "
+                                docker pull ${dockerImage}
+                                docker stop react-app || true
+                                docker rm react-app || true
+                                docker run -d --name react-app -p 80:80 ${dockerImage}
+                            "
+                        """
+                        echo "🚀 Successfully deployed ${dockerImage} to ${env.AGENT_IP}"
                     }
                 }
             }
@@ -213,12 +267,27 @@ pipeline {
 
     post {
         always {
-            sh 'docker logout'
-            cleanWs()
+            script {
+                sh 'docker logout || true'
+                // Clean up images safely
+                try {
+                    env.DOCKER_TAGS.split().each { tag ->
+                        sh "docker rmi ${tag} || true"
+                    }
+                } catch (e) {
+                    echo "Warning: Error during image cleanup - ${e.message}"
+                }
+                cleanWs()
+            }
+        }
+        success {
+            echo "Successfully built and pushed images with tags: ${env.DOCKER_TAGS}"
+        }
+        failure {
+            echo "Pipeline failed for branch ${env.BRANCH_NAME}"
         }
     }
-}
-```
+}```
 
 ---
 
