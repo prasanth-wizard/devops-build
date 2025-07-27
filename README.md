@@ -1,5 +1,5 @@
 
-# ReactJS E-Commerce Application - CI/CD Deployment Project
+# ReactJS E-Commerce Application – CI/CD Deployment with Jenkins Multibranch Pipeline
 
 This project demonstrates my ability to build, deploy, and monitor a production-ready ReactJS application using a complete DevOps toolchain. It includes Dockerization, CI/CD with Jenkins, cloud deployment on AWS EC2, and real-time monitoring using open-source tools.
 
